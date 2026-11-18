@@ -13,7 +13,7 @@
 | Notifikasi | SendGrid/SES (email), Twilio/Zenziva (SMS) | Provider umum, reliable delivery, mendukung template |
 | Auth | JWT (access + refresh token), biometric via device secure storage | Stateless auth untuk skalabilitas, biometric key tidak pernah keluar device (sesuai best practice FIDO/local biometric) |
 
-## Keamanan (ringkas)
+## Keamanan
 
 - Data KTP & foto dienkripsi at-rest dan in-transit (TLS 1.2+).
 - PII (NIK, foto) tidak di-log.
