@@ -10,10 +10,10 @@ flowchart TD
     Landing --> Register[Screen: Register]
 
     Register --> RegForm[Isi Data Diri<br/>nama, email, no. telp]
-    RegForm --> UploadDoc[Upload Selfie + Foto KTP]
-    UploadDoc --> OTP[Verifikasi OTP<br/>email/SMS]
-    OTP --> KYCCheck{KYC/OCR<br/>Verifikasi}
-    KYCCheck -->|Gagal| UploadDoc
+    RegForm --> OTP[Verifikasi OTP<br/>email/SMS]
+    OTP --> UploadDoc[Upload Selfie + Foto KTP]
+    UploadDoc --> KYCCheck{KYC/OCR<br/>Verifikasi}
+    KYCCheck -->|Gagal, upload ulang| UploadDoc
     KYCCheck -->|Sukses| SetPassword[Set Password]
     SetPassword --> RegSuccess[Registrasi Berhasil]
     RegSuccess --> Login
@@ -31,7 +31,6 @@ flowchart TD
     LoanStatusCheck -->|Tidak| HomeEmpty[Tampilkan:<br/>CTA Ajukan Pinjaman]
 
     HomeActive --> Detail[Screen: Detail Pinjaman & Histori Bayar]
-    HomeActive -.->|Tombol ajukan disabled| Blocked[Info: Lunasi dulu<br/>pinjaman berjalan]
 
     HomeEmpty --> LoanForm[Screen: Form Pengajuan Pinjaman<br/>nominal max 12jt, tenor max 12 bulan]
     LoanForm --> LoanReview[Screen: Review & Konfirmasi]
@@ -50,6 +49,6 @@ flowchart TD
 
 ## Catatan Flow
 
-- **Blocked state**: tombol "Ajukan Pinjaman" di Home otomatis disabled selama `LoanStatusCheck` bernilai aktif (ada pinjaman belum lunas), sesuai requirement "User tidak dapat melakukan peminjaman jika sedang ada proses peminjaman dan belum dilunaskan".
+- **Blocked state**: tombol "Ajukan Pinjaman" di screen `HomeActive` otomatis disabled (dengan tooltip "Lunasi dulu pinjaman berjalan") selama `LoanStatusCheck` bernilai aktif (ada pinjaman belum lunas), sesuai requirement "User tidak dapat melakukan peminjaman jika sedang ada proses peminjaman dan belum dilunaskan". Ini state di dalam screen Home, bukan screen terpisah.
 - **Processing screen**: karena hasil scoring bisa async (lihat [architecture](../01-architecture/high-level-architecture.md)), screen ini bisa menunggu dengan polling/push, atau user boleh keluar dan menerima notifikasi push/email/SMS saat hasil sudah ada.
-- **KYC gagal** mengembalikan user ke step upload dokumen untuk re-upload (foto blur, data tidak cocok, dll).
+- **Urutan OTP sebelum upload KTP**: OTP memverifikasi kepemilikan email/nomor telepon terlebih dulu, baru lanjut upload dokumen identitas. Dengan urutan ini, jika KYC/OCR gagal (foto blur, data tidak cocok, dll), user cukup diarahkan ulang ke `UploadDoc` → `KYCCheck` tanpa perlu mengulang verifikasi OTP yang sudah berhasil.
