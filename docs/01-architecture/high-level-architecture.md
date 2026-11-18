@@ -5,60 +5,67 @@
 ```mermaid
 flowchart TB
     subgraph Client["Mobile Client"]
-        A1[Mobile App - Android/iOS]
+        A1[Mobile App Flutter<br/>Android & iOS]
     end
 
     subgraph Edge["Edge Layer"]
         LB[Load Balancer]
-        GW[API Gateway<br/>Auth, Rate Limit, Routing]
+        GW[API Gateway<br/>verifikasi JWT, rate limit, routing]
     end
 
-    subgraph Backend["Backend - Monolith Modular"]
-        AuthM[Auth Module<br/>Login, Register, Biometric Token]
-        UserM[User Module<br/>Profile, KYC Status]
-        LoanM[Loan Module<br/>Apply, Approval, Status]
-        RepayM[Repayment Module<br/>Billing, Due, History]
-        NotifM[Notification Module<br/>Email/SMS Trigger]
-        DocM[Document Module<br/>KTP/Selfie Upload]
+    subgraph Backend["Backend NestJS - Monolith Modular"]
+        AuthM[Auth Module<br/>register, OTP, login, sesi, biometric]
+        UserM[User Module<br/>profil, device, status KYC]
+        DocM[Document Module<br/>upload KTP/selfie, webhook KYC]
+        LoanM[Loan Module<br/>simulasi, pengajuan, aturan blokir]
+        RepayM[Repayment Module<br/>jadwal cicilan, sisa hutang]
+        NotifM[Notification Module<br/>email, SMS]
     end
 
     subgraph Async["Async Processing"]
-        Queue[(Message Queue<br/>e.g. RabbitMQ/SQS)]
-        Worker[Worker Service<br/>Credit Scoring Job,<br/>Notification Sender]
+        Queue[(Amazon SQS<br/>+ dead-letter queue)]
+        Worker[Worker Service<br/>credit scoring job,<br/>pengiriman notifikasi]
+        Scheduler[Scheduler harian<br/>status DUE/OVERDUE,<br/>reminder H-3/H-1]
     end
 
     subgraph Data["Data Layer"]
-        DB[(Primary DB<br/>PostgreSQL)]
-        Cache[(Cache<br/>Redis - session, OTP)]
-        Blob[(Object Storage<br/>KTP/Selfie Images)]
+        DB[(PostgreSQL)]
+        Cache[(Redis<br/>OTP, challenge, rate limit)]
+        Blob[(Amazon S3<br/>KTP/selfie terenkripsi)]
     end
 
-    subgraph ThirdParty["3rd Party Services"]
-        KYC[KYC/OCR Provider<br/>e.g. Privy/VIDA]
-        CreditScore[Credit Scoring Engine<br/>internal rule-engine or external bureau]
-        EmailSvc[Email Provider]
-        SmsSvc[SMS Provider]
+    subgraph ThirdParty["Layanan Pihak Ketiga"]
+        KYC[KYC Provider VIDA<br/>OCR, liveness, Dukcapil]
+        CreditScore[Credit Scoring Engine<br/>rule internal + biro kredit]
+        EmailSvc[Amazon SES]
+        SmsSvc[SMS Gateway Lokal]
     end
 
     A1 -->|HTTPS/REST| LB --> GW
     GW --> AuthM
     GW --> UserM
+    GW --> DocM
     GW --> LoanM
     GW --> RepayM
-    GW --> DocM
 
     AuthM --> Cache
     AuthM --> DB
+    AuthM -->|OTP| SmsSvc
     UserM --> DB
     DocM --> Blob
-    DocM --> KYC
+    DocM -->|submit verifikasi| KYC
+    KYC -.->|webhook hasil| GW
+    DocM --> DB
     LoanM --> DB
-    LoanM --> Queue
+    LoanM -->|LoanSubmitted| Queue
     RepayM --> DB
 
     Queue --> Worker
     Worker --> CreditScore
+    Worker --> DB
     Worker --> NotifM
+    Scheduler -->|update status cicilan| DB
+    Scheduler -->|trigger reminder| NotifM
     NotifM --> EmailSvc
     NotifM --> SmsSvc
     NotifM --> DB
@@ -68,21 +75,23 @@ flowchart TB
 
 | Komponen | Tanggung Jawab |
 |---|---|
-| **Mobile App** | Native/cross-platform app (Flutter/React Native), menyimpan token sesi, biometric prompt lokal |
-| **API Gateway** | Single entry point: autentikasi token (JWT), rate limiting, routing ke modul backend |
-| **Auth Module** | Register, login (password + biometric token exchange), OTP verifikasi email/telepon |
-| **Document Module** | Upload foto diri + KTP, kirim ke KYC provider untuk OCR & liveness check |
-| **User Module** | Data profil user, status KYC |
-| **Loan Module** | Pengajuan pinjaman, cek eligibility (ada pinjaman aktif/tidak), trigger proses scoring |
-| **Repayment Module** | Kalkulasi tagihan bulanan, sisa hutang, histori pembayaran |
-| **Notification Module** | Mengirim notifikasi hasil pengajuan via email & SMS |
-| **Message Queue + Worker** | Memproses credit scoring secara async (tidak blocking request), mengirim notifikasi async |
-| **Credit Scoring Engine** | Menentukan diterima/ditolak berdasarkan rule/skor kredit |
-| **Object Storage** | Penyimpanan file foto KTP & selfie (terenkripsi, akses terbatas) |
+| **Mobile App (Flutter)** | UI, kamera untuk KTP/selfie, biometric prompt lokal, menyimpan token di secure storage |
+| **Load Balancer** | Membagi traffic ke beberapa instance backend dan mengalihkan traffic jika satu instance mati |
+| **API Gateway** | Pintu masuk tunggal: verifikasi JWT, rate limiting, routing ke modul backend |
+| **Auth Module** | Registrasi, OTP, onboarding token, login password, refresh/logout, challenge dan verifikasi biometric, lupa password |
+| **User Module** | Profil user, device untuk biometric, status KYC |
+| **Document Module** | Upload KTP/selfie ke S3, mengirim ke provider KYC, menerima webhook hasil verifikasi |
+| **Loan Module** | Simulasi cicilan, pengajuan, aturan "satu pinjaman berjalan", publish event ke queue |
+| **Repayment Module** | Jadwal cicilan, sisa hutang, tagihan bulan berjalan |
+| **Notification Module** | Mengirim notifikasi hasil pengajuan (disetujui/ditolak) dan pengingat tagihan via email dan SMS, serta mencatat status pengiriman |
+| **Message Queue + Worker** | Menjalankan credit scoring dan pengiriman notifikasi di luar request user, dengan retry dan dead-letter queue |
+| **Scheduler** | Job harian: mengubah status cicilan menjadi `DUE`/`OVERDUE` dan memicu pengingat H-3 dan H-1 |
+| **Credit Scoring Engine** | Menentukan disetujui/ditolak dari data profil (umur, pekerjaan, penghasilan) dan data biro kredit |
+| **Object Storage** | Menyimpan file KTP dan selfie, terenkripsi, diakses lewat signed URL |
 
 ## Alasan Desain
 
-- **Async untuk proses scoring**: pengajuan pinjaman tidak selalu instan (tergantung 3rd party), sehingga request `POST /loans` langsung return `PENDING` dan status final diupdate lewat worker + push notifikasi.
-- **API Gateway** sebagai satu pintu masuk memudahkan pengelolaan autentikasi & rate limiting, penting untuk aplikasi fintech yang rawan abuse (fraud, brute force).
-- **Object Storage terpisah dari DB utama** untuk file KTP/selfie — lebih murah, scalable, dan memudahkan kontrol akses/enkripsi data sensitif secara terpisah.
-- **Monolith modular** dipilih karena skala awal startup fintech belum butuh kompleksitas microservices; modul tetap dipisah secara logis agar mudah di-extract jadi service independen saat scale bertambah.
+- **Scoring dan KYC asinkron.** Keduanya bergantung pada pihak ketiga yang bisa lambat atau down. `POST /loans` langsung membalas `202` dengan status `SUBMITTED`, dan KYC membalas `202` lalu hasilnya datang lewat webhook. User tidak menunggu dengan koneksi terbuka, dan kegagalan provider di-retry dari queue.
+- **API Gateway** sebagai satu pintu masuk memusatkan autentikasi dan rate limiting, penting untuk aplikasi fintech yang rawan brute force dan fraud.
+- **Object storage terpisah dari database** untuk file KTP/selfie: lebih murah, mudah di-scale, dan akses ke data sensitif bisa dikontrol terpisah.
+- **Monolith modular** dipilih karena skala awal belum butuh kompleksitas microservices. Modul dipisah secara logis sehingga bisa diangkat menjadi service sendiri saat skala bertambah. Worker sudah terpisah sejak awal karena pola bebannya berbeda.
