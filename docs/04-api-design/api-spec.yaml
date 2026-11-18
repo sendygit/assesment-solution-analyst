@@ -1,53 +1,64 @@
 openapi: 3.0.3
 info:
   title: PT XYZ - Pinjaman Online API
-  description: API design untuk aplikasi mobile pinjaman online.
-  version: "1.0.0"
+  description: |
+    API untuk aplikasi mobile pinjaman online.
+
+    Jenis token:
+    - **Onboarding token**: JWT berumur 30 menit dengan scope `onboarding`, diterbitkan setelah OTP valid.
+      Hanya bisa dipakai untuk upload dokumen, cek status KYC, dan set password.
+    - **Access token**: JWT berumur 15 menit dengan scope `user`, diterbitkan saat login.
+      Diperbarui lewat refresh token (disimpan ter-hash di tabel AUTH_SESSION).
+
+    Semua error memakai skema `ErrorResponse`.
+  version: "1.1.0"
 servers:
   - url: https://api.xyz-fintech.com/v1
 
 tags:
   - name: Auth
-  - name: User
-  - name: Document
+  - name: Onboarding
+  - name: Device
   - name: Loan
-  - name: Repayment
-  - name: Notification
+  - name: Webhook
 
 paths:
   /auth/register:
     post:
       tags: [Auth]
-      summary: Registrasi user baru
+      summary: Registrasi data diri dan kirim OTP ke nomor telepon
+      description: |
+        Membuat user dengan status ONBOARDING lalu mengirim OTP via SMS dan link verifikasi email.
+        Jika nomor telepon sudah terdaftar tapi onboarding belum selesai, OTP dikirim ulang
+        agar user bisa melanjutkan registrasi (resume).
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [full_name, email, phone_number, password]
-              properties:
-                full_name: { type: string }
-                email: { type: string, format: email }
-                phone_number: { type: string }
-                password: { type: string, format: password }
+              $ref: '#/components/schemas/RegisterRequest'
       responses:
         "201":
-          description: User berhasil dibuat, menunggu verifikasi dokumen & OTP
+          description: User dibuat dan OTP dikirim
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  user_id: { type: string, format: uuid }
-                  kyc_status: { type: string, enum: [PENDING] }
+                $ref: '#/components/schemas/RegisterResponse'
+        "200":
+          description: Registrasi belum selesai, OTP dikirim ulang untuk melanjutkan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
         "409":
-          description: Email/nomor telepon sudah terdaftar
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/ValidationError'
 
   /auth/verify-otp:
     post:
       tags: [Auth]
-      summary: Verifikasi OTP email/SMS
+      summary: Verifikasi OTP nomor telepon
       requestBody:
         required: true
         content:
@@ -57,86 +68,206 @@ paths:
               required: [user_id, otp]
               properties:
                 user_id: { type: string, format: uuid }
-                otp: { type: string }
-      responses:
-        "200": { description: OTP valid, akun aktif }
-        "400": { description: OTP tidak valid/kadaluarsa }
-
-  /auth/login:
-    post:
-      tags: [Auth]
-      summary: Login dengan email/no. telp + password
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [identifier, password]
-              properties:
-                identifier: { type: string, description: "email atau nomor telepon" }
-                password: { type: string, format: password }
+                otp: { type: string, pattern: '^[0-9]{6}$' }
       responses:
         "200":
-          description: Login berhasil
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AuthToken'
-        "401": { description: Kredensial salah }
-
-  /auth/login/biometric:
-    post:
-      tags: [Auth]
-      summary: Login dengan biometric (device sudah terdaftar)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [device_id, signed_challenge]
-              properties:
-                device_id: { type: string }
-                signed_challenge: { type: string, description: "challenge yang ditandatangani private key biometric di device" }
-      responses:
-        "200":
-          description: Login berhasil
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AuthToken'
-        "401": { description: Signature tidak valid }
-
-  /users/{userId}/documents:
-    post:
-      tags: [Document]
-      summary: Upload foto selfie & KTP untuk verifikasi KYC
-      parameters:
-        - $ref: '#/components/parameters/UserId'
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              properties:
-                selfie: { type: string, format: binary }
-                ktp: { type: string, format: binary }
-      responses:
-        "200":
-          description: Dokumen diterima, proses verifikasi berjalan
+          description: "OTP valid, onboarding token diterbitkan"
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  kyc_status: { type: string, enum: [PENDING, VERIFIED, REJECTED] }
+                  onboarding_token: { type: string }
+                  expires_in: { type: integer, example: 1800 }
+                  next_step:
+                    type: string
+                    enum: [UPLOAD_DOCUMENTS, WAIT_KYC, SET_PASSWORD]
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+
+  /auth/set-password:
+    post:
+      tags: [Onboarding]
+      summary: Set password setelah KYC terverifikasi (langkah terakhir onboarding)
+      security: [{ onboardingAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, format: password, minLength: 8 }
+      responses:
+        "200":
+          description: "Password tersimpan, status user menjadi ACTIVE, dan user langsung login"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthToken'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "422":
+          $ref: '#/components/responses/ValidationError'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login dengan email atau nomor telepon dan password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, password, device_id]
+              properties:
+                identifier: { type: string, description: "email atau nomor telepon" }
+                password: { type: string, format: password }
+                device_id: { type: string }
+      responses:
+        "200":
+          description: Login berhasil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthToken'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "429":
+          $ref: '#/components/responses/TooManyRequests'
+
+  /auth/biometric/challenge:
+    post:
+      tags: [Auth]
+      summary: Minta challenge sekali pakai untuk login biometric
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_id]
+              properties:
+                device_id: { type: string }
+      responses:
+        "200":
+          description: "Challenge acak, berlaku 60 detik, hanya bisa dipakai sekali"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  challenge_id: { type: string, format: uuid }
+                  challenge: { type: string, description: "nonce base64" }
+                  expires_in: { type: integer, example: 60 }
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /auth/login/biometric:
+    post:
+      tags: [Auth]
+      summary: Login biometric dengan challenge yang ditandatangani private key di device
+      description: |
+        Biometric diverifikasi lokal oleh OS. Setelah berhasil, app menandatangani challenge
+        dengan private key yang tersimpan di secure enclave/keystore. Server memverifikasi
+        signature memakai public key yang terdaftar di tabel DEVICE.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_id, challenge_id, signature]
+              properties:
+                device_id: { type: string }
+                challenge_id: { type: string, format: uuid }
+                signature: { type: string }
+      responses:
+        "200":
+          description: Login berhasil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthToken'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Tukar refresh token dengan access token baru (refresh token dirotasi)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          description: Token baru
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthToken'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout dan cabut sesi (refresh token) di device ini
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Sesi dicabut }
+
+  /auth/password/forgot:
+    post:
+      tags: [Auth]
+      summary: Minta OTP untuk reset password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone_number]
+              properties:
+                phone_number: { type: string }
+      responses:
+        "202":
+          description: "Jika nomor terdaftar, OTP dikirim. Respons selalu sama untuk mencegah user enumeration"
+
+  /auth/password/reset:
+    post:
+      tags: [Auth]
+      summary: Reset password dengan OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone_number, otp, new_password]
+              properties:
+                phone_number: { type: string }
+                otp: { type: string, pattern: '^[0-9]{6}$' }
+                new_password: { type: string, format: password, minLength: 8 }
+      responses:
+        "204": { description: "Password diganti, semua sesi lama dicabut" }
+        "400":
+          $ref: '#/components/responses/BadRequest'
 
   /users/me:
     get:
-      tags: [User]
-      summary: Ambil data profil user yang sedang login
+      tags: [Onboarding]
+      summary: Profil user yang sedang login
       security: [{ bearerAuth: [] }]
       responses:
         "200":
@@ -145,58 +276,199 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/User'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
-  /loans:
+  /users/me/documents:
     post:
-      tags: [Loan]
-      summary: Ajukan pinjaman baru
+      tags: [Onboarding]
+      summary: Upload foto selfie dan KTP untuk verifikasi KYC (asinkron)
+      description: |
+        Hanya bisa diakses dengan onboarding token. User diambil dari token, bukan dari path,
+        sehingga user tidak bisa mengunggah dokumen ke akun orang lain.
+        Jika KYC ditolak, user bisa upload ulang.
+      security: [{ onboardingAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [selfie, ktp]
+              properties:
+                selfie: { type: string, format: binary, description: "jpg/png, maks 5MB" }
+                ktp: { type: string, format: binary, description: "jpg/png, maks 5MB" }
+      responses:
+        "202":
+          description: Dokumen diterima, verifikasi berjalan di provider KYC
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycStatus'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/ValidationError'
+
+  /users/me/kyc-status:
+    get:
+      tags: [Onboarding]
+      summary: Polling status verifikasi KYC
+      security: [{ onboardingAuth: [] }, { bearerAuth: [] }]
+      responses:
+        "200":
+          description: Status KYC terkini
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycStatus'
+
+  /devices/{deviceId}/biometric:
+    put:
+      tags: [Device]
+      summary: Aktifkan login biometric dengan mendaftarkan public key device
       security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [amount, tenor_months]
+              required: [public_key, platform, password]
               properties:
-                amount: { type: number, maximum: 12000000, example: 5000000 }
-                tenor_months: { type: integer, maximum: 12, example: 6 }
+                public_key: { type: string, description: "public key dari keypair di secure enclave/keystore" }
+                platform: { type: string, enum: [ANDROID, IOS] }
+                password: { type: string, format: password, description: "konfirmasi ulang password" }
+      responses:
+        "204": { description: Biometric aktif untuk device ini }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [Device]
+      summary: Nonaktifkan login biometric di device ini
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        "204": { description: Biometric nonaktif dan public key dihapus }
+
+  /loans/simulate:
+    post:
+      tags: [Loan]
+      summary: Hitung estimasi cicilan (dihitung server, tidak membuat pinjaman)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoanRequest'
+      responses:
+        "200":
+          description: Hasil simulasi
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoanSimulation'
+        "422":
+          $ref: '#/components/responses/ValidationError'
+
+  /loans:
+    post:
+      tags: [Loan]
+      summary: Ajukan pinjaman baru
+      description: |
+        Ditolak dengan 409 `LOAN_ALREADY_OPEN` jika user masih punya pinjaman berstatus
+        SUBMITTED, PROCESSING, APPROVED, atau ACTIVE. Aturan ini juga dijaga oleh
+        partial unique index di database sehingga dua request bersamaan tidak bisa lolos.
+        Header `Idempotency-Key` mencegah pengajuan ganda saat app retry.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/LoanRequest'
+                - type: object
+                  required: [agreement_version]
+                  properties:
+                    agreement_version: { type: string, example: "LOAN-AGR-2026.1" }
       responses:
         "202":
-          description: Pengajuan diterima, sedang diproses
+          description: Pengajuan diterima dan masuk antrean scoring
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Loan'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/ValidationError'
+    get:
+      tags: [Loan]
+      summary: Riwayat pinjaman user
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: size
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+      responses:
+        "200":
+          description: Daftar pinjaman
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  loan_id: { type: string, format: uuid }
-                  status: { type: string, enum: [PROCESSING] }
-        "400":
-          description: Masih ada pinjaman aktif / nominal-tenor melebihi batas
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Loan'
+                  page: { type: integer }
+                  size: { type: integer }
+                  total: { type: integer }
+
+  /loans/current:
     get:
       tags: [Loan]
-      summary: Lihat histori pengajuan pinjaman
+      summary: Pinjaman yang sedang berjalan (dipakai screen Home)
+      description: |
+        Mengembalikan pinjaman berstatus SUBMITTED, PROCESSING, APPROVED, atau ACTIVE.
+        `loan` bernilai null jika tidak ada. `can_apply` menentukan tombol Ajukan Pinjaman.
+        Jika pinjaman ACTIVE, respons juga berisi sisa hutang dan tagihan berikutnya.
       security: [{ bearerAuth: [] }]
       responses:
         "200":
-          description: Daftar pinjaman user
+          description: Ringkasan pinjaman berjalan
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Loan'
+                $ref: '#/components/schemas/CurrentLoan'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
   /loans/{loanId}:
     get:
       tags: [Loan]
-      summary: Detail status pengajuan pinjaman
+      summary: Detail pinjaman
       security: [{ bearerAuth: [] }]
       parameters:
-        - name: loanId
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/LoanId'
       responses:
         "200":
           description: Detail pinjaman
@@ -204,26 +476,48 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Loan'
+        "404":
+          $ref: '#/components/responses/NotFound'
 
-  /loans/active/repayments:
+  /loans/{loanId}/installments:
     get:
-      tags: [Repayment]
-      summary: Lihat sisa hutang & tagihan bulan berjalan dari pinjaman aktif
+      tags: [Loan]
+      summary: Jadwal dan histori cicilan sebuah pinjaman
       security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/LoanId'
       responses:
         "200":
-          description: Ringkasan tagihan
+          description: Daftar cicilan
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  loan_id: { type: string, format: uuid }
-                  remaining_balance: { type: number }
-                  monthly_installment: { type: number }
-                  next_due_date: { type: string, format: date }
-        "204":
-          description: Tidak ada pinjaman aktif
+                type: array
+                items:
+                  $ref: '#/components/schemas/Installment'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+  /webhooks/kyc:
+    post:
+      tags: [Webhook]
+      summary: Callback hasil verifikasi dari provider KYC (server-to-server)
+      security: [{ webhookSignature: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [provider_ref, result]
+              properties:
+                provider_ref: { type: string }
+                result: { type: string, enum: [VERIFIED, REJECTED] }
+                reason_code: { type: string, example: "KTP_BLUR" }
+      responses:
+        "204": { description: Diterima }
+        "401":
+          $ref: '#/components/responses/Unauthorized'
 
 components:
   securitySchemes:
@@ -231,21 +525,107 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: Access token scope `user`
+    onboardingAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Onboarding token scope `onboarding`, berlaku 30 menit setelah OTP valid
+    webhookSignature:
+      type: apiKey
+      in: header
+      name: X-Signature
+      description: HMAC-SHA256 dari body dengan secret yang dibagi dengan provider KYC
 
   parameters:
-    UserId:
-      name: userId
+    LoanId:
+      name: loanId
       in: path
       required: true
       schema: { type: string, format: uuid }
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    BadRequest:
+      description: Request tidak valid (misalnya OTP salah atau kedaluwarsa)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthorized:
+      description: Token atau kredensial tidak valid
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: "Tidak diizinkan, misalnya KYC belum VERIFIED (KYC_NOT_VERIFIED)"
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Resource tidak ditemukan atau bukan milik user
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: "Konflik state, misalnya LOAN_ALREADY_OPEN, PHONE_ALREADY_REGISTERED, KYC_ALREADY_VERIFIED"
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    ValidationError:
+      description: "Validasi gagal, misalnya nominal melebihi Rp 12.000.000 atau tenor melebihi 12 bulan"
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    TooManyRequests:
+      description: Terlalu banyak percobaan, coba lagi nanti
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
 
   schemas:
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, example: "LOAN_ALREADY_OPEN" }
+        message: { type: string, example: "Masih ada pinjaman yang sedang diproses atau belum lunas" }
+        field_errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string, example: "amount" }
+              message: { type: string, example: "Maksimal Rp 12.000.000" }
+
+    RegisterRequest:
+      type: object
+      required: [full_name, nik, date_of_birth, email, phone_number, occupation, monthly_income, consent_version]
+      properties:
+        full_name: { type: string }
+        nik: { type: string, pattern: '^[0-9]{16}$' }
+        date_of_birth: { type: string, format: date }
+        email: { type: string, format: email }
+        phone_number: { type: string, example: "+6281234567890" }
+        occupation: { type: string, example: "Karyawan Swasta" }
+        monthly_income: { type: number, example: 7500000 }
+        consent_version: { type: string, description: "versi syarat & ketentuan + kebijakan privasi yang disetujui", example: "TNC-2026.1" }
+
+    RegisterResponse:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        otp_expires_in: { type: integer, example: 300 }
+
     AuthToken:
       type: object
       properties:
         access_token: { type: string }
         refresh_token: { type: string }
-        expires_in: { type: integer, example: 3600 }
+        expires_in: { type: integer, example: 900 }
 
     User:
       type: object
@@ -254,7 +634,32 @@ components:
         full_name: { type: string }
         email: { type: string }
         phone_number: { type: string }
-        kyc_status: { type: string, enum: [PENDING, VERIFIED, REJECTED] }
+        email_verified: { type: boolean }
+        phone_verified: { type: boolean }
+        kyc_status: { type: string, enum: [NOT_SUBMITTED, PENDING, VERIFIED, REJECTED] }
+        status: { type: string, enum: [ONBOARDING, ACTIVE, SUSPENDED] }
+
+    KycStatus:
+      type: object
+      properties:
+        kyc_status: { type: string, enum: [NOT_SUBMITTED, PENDING, VERIFIED, REJECTED] }
+        reason_code: { type: string, nullable: true, example: "KTP_BLUR" }
+
+    LoanRequest:
+      type: object
+      required: [amount, tenor_months]
+      properties:
+        amount: { type: number, minimum: 500000, maximum: 12000000, example: 6000000 }
+        tenor_months: { type: integer, minimum: 1, maximum: 12, example: 6 }
+
+    LoanSimulation:
+      type: object
+      properties:
+        amount: { type: number, example: 6000000 }
+        tenor_months: { type: integer, example: 6 }
+        interest_rate_monthly: { type: number, example: 0.015, description: "bunga flat per bulan" }
+        monthly_installment: { type: number, example: 1090000 }
+        total_repayment: { type: number, example: 6540000 }
 
     Loan:
       type: object
@@ -262,7 +667,39 @@ components:
         id: { type: string, format: uuid }
         amount: { type: number }
         tenor_months: { type: integer }
+        interest_rate_monthly: { type: number }
+        monthly_installment: { type: number }
+        total_repayment: { type: number }
         status:
           type: string
           enum: [SUBMITTED, PROCESSING, APPROVED, REJECTED, ACTIVE, PAID_OFF]
+        reject_reason: { type: string, nullable: true }
         submitted_at: { type: string, format: date-time }
+        disbursed_at: { type: string, format: date-time, nullable: true }
+
+    CurrentLoan:
+      type: object
+      properties:
+        can_apply: { type: boolean }
+        blocked_reason:
+          type: string
+          nullable: true
+          enum: [LOAN_IN_PROCESS, LOAN_NOT_PAID_OFF, KYC_NOT_VERIFIED]
+        loan:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Loan'
+        remaining_balance: { type: number, nullable: true }
+        next_installment:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Installment'
+
+    Installment:
+      type: object
+      properties:
+        installment_number: { type: integer }
+        amount_due: { type: number }
+        due_date: { type: string, format: date }
+        status: { type: string, enum: [UPCOMING, DUE, PAID, OVERDUE] }
+        paid_at: { type: string, format: date-time, nullable: true }
