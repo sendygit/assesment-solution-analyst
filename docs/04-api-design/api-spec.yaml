@@ -1,0 +1,268 @@
+openapi: 3.0.3
+info:
+  title: PT XYZ - Pinjaman Online API
+  description: API design untuk aplikasi mobile pinjaman online.
+  version: "1.0.0"
+servers:
+  - url: https://api.xyz-fintech.com/v1
+
+tags:
+  - name: Auth
+  - name: User
+  - name: Document
+  - name: Loan
+  - name: Repayment
+  - name: Notification
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Registrasi user baru
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [full_name, email, phone_number, password]
+              properties:
+                full_name: { type: string }
+                email: { type: string, format: email }
+                phone_number: { type: string }
+                password: { type: string, format: password }
+      responses:
+        "201":
+          description: User berhasil dibuat, menunggu verifikasi dokumen & OTP
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id: { type: string, format: uuid }
+                  kyc_status: { type: string, enum: [PENDING] }
+        "409":
+          description: Email/nomor telepon sudah terdaftar
+
+  /auth/verify-otp:
+    post:
+      tags: [Auth]
+      summary: Verifikasi OTP email/SMS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, otp]
+              properties:
+                user_id: { type: string, format: uuid }
+                otp: { type: string }
+      responses:
+        "200": { description: OTP valid, akun aktif }
+        "400": { description: OTP tidak valid/kadaluarsa }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login dengan email/no. telp + password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, password]
+              properties:
+                identifier: { type: string, description: "email atau nomor telepon" }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Login berhasil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthToken'
+        "401": { description: Kredensial salah }
+
+  /auth/login/biometric:
+    post:
+      tags: [Auth]
+      summary: Login dengan biometric (device sudah terdaftar)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_id, signed_challenge]
+              properties:
+                device_id: { type: string }
+                signed_challenge: { type: string, description: "challenge yang ditandatangani private key biometric di device" }
+      responses:
+        "200":
+          description: Login berhasil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthToken'
+        "401": { description: Signature tidak valid }
+
+  /users/{userId}/documents:
+    post:
+      tags: [Document]
+      summary: Upload foto selfie & KTP untuk verifikasi KYC
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                selfie: { type: string, format: binary }
+                ktp: { type: string, format: binary }
+      responses:
+        "200":
+          description: Dokumen diterima, proses verifikasi berjalan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kyc_status: { type: string, enum: [PENDING, VERIFIED, REJECTED] }
+
+  /users/me:
+    get:
+      tags: [User]
+      summary: Ambil data profil user yang sedang login
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Data profil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+  /loans:
+    post:
+      tags: [Loan]
+      summary: Ajukan pinjaman baru
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, tenor_months]
+              properties:
+                amount: { type: number, maximum: 12000000, example: 5000000 }
+                tenor_months: { type: integer, maximum: 12, example: 6 }
+      responses:
+        "202":
+          description: Pengajuan diterima, sedang diproses
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  loan_id: { type: string, format: uuid }
+                  status: { type: string, enum: [PROCESSING] }
+        "400":
+          description: Masih ada pinjaman aktif / nominal-tenor melebihi batas
+    get:
+      tags: [Loan]
+      summary: Lihat histori pengajuan pinjaman
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Daftar pinjaman user
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Loan'
+
+  /loans/{loanId}:
+    get:
+      tags: [Loan]
+      summary: Detail status pengajuan pinjaman
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: loanId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Detail pinjaman
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Loan'
+
+  /loans/active/repayments:
+    get:
+      tags: [Repayment]
+      summary: Lihat sisa hutang & tagihan bulan berjalan dari pinjaman aktif
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Ringkasan tagihan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  loan_id: { type: string, format: uuid }
+                  remaining_balance: { type: number }
+                  monthly_installment: { type: number }
+                  next_due_date: { type: string, format: date }
+        "204":
+          description: Tidak ada pinjaman aktif
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  schemas:
+    AuthToken:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer, example: 3600 }
+
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        full_name: { type: string }
+        email: { type: string }
+        phone_number: { type: string }
+        kyc_status: { type: string, enum: [PENDING, VERIFIED, REJECTED] }
+
+    Loan:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        amount: { type: number }
+        tenor_months: { type: integer }
+        status:
+          type: string
+          enum: [SUBMITTED, PROCESSING, APPROVED, REJECTED, ACTIVE, PAID_OFF]
+        submitted_at: { type: string, format: date-time }
