@@ -45,13 +45,3 @@ Hal berikut dibutuhkan agar produk bisa berjalan penuh, tetapi tidak diminta di 
 
 - **Pencairan dana.** Status `APPROVED` berubah menjadi `ACTIVE` saat dana cair (`LOAN.disbursed_at`). Data rekening tujuan dan integrasi payment gateway untuk pencairan belum didesain.
 - **Pembayaran cicilan.** Diasumsikan user membayar lewat virtual account, dan sistem pembayaran mengubah status cicilan menjadi `PAID`.
-
-## Pertanyaan Terbuka
-
-Hal yang perlu dikonfirmasi ke bisnis sebelum development:
-
-1. Berapa suku bunga dan nominal minimum pinjaman, dan apakah ada biaya admin?
-2. Apakah limit Rp 12.000.000 sama untuk semua user, atau ditentukan per user dari hasil scoring?
-3. Apakah ada review manual untuk kasus tertentu, misalnya nominal besar atau skor di ambang batas?
-4. Apakah user yang ditolak harus menunggu sebelum mengajukan lagi, dan apakah pelunasan dipercepat diperbolehkan?
-5. Vendor mana yang sudah dikontrak untuk KYC, SMS, dan biro kredit?
