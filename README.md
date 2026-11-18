@@ -5,31 +5,53 @@ Dokumen desain solusi untuk aplikasi mobile pinjaman online PT. XYZ. Disusun ber
 ## Ringkasan Kebutuhan
 
 - Registrasi dengan data diri, email, nomor telepon, upload foto + KTP
-- Login dengan password atau biometric
+- Login dengan password atau biometric (jika tersedia di perangkat)
 - Lihat sisa hutang & tagihan bulanan (jika ada)
 - Pengajuan pinjaman maksimal Rp 12.000.000, tenor maksimal 12 bulan
 - Proses pengajuan menghasilkan status diterima/ditolak
-- Notifikasi via email & SMS saat pinjaman disetujui
-- User tidak bisa mengajukan pinjaman baru jika masih ada pinjaman aktif yang belum lunas
+- Notifikasi via email & SMS ke kontak terdaftar saat pinjaman diterima
+- User tidak bisa mengajukan pinjaman baru selama ada pengajuan yang sedang diproses atau pinjaman yang belum lunas
 
 ## Daftar Dokumen
 
-| # | Dokumen | Isi |
-|---|---------|-----|
-| 1 | [docs/01-architecture/high-level-architecture.md](docs/01-architecture/high-level-architecture.md) | High-level architecture diagram & komponen sistem |
-| 1b | [docs/01-architecture/tech-decisions.md](docs/01-architecture/tech-decisions.md) | Pilihan teknologi & justifikasi |
-| 2a | [docs/02-screen-flow/screen-flow.md](docs/02-screen-flow/screen-flow.md) | Screen flow aplikasi mobile |
-| 2b | [docs/03-erd/erd.md](docs/03-erd/erd.md) | Entity Relationship Diagram |
-| 3a | [docs/04-api-design/api-sequence-diagrams.md](docs/04-api-design/api-sequence-diagrams.md) | Sequence diagram per use case utama |
-| 3b | [docs/04-api-design/api-spec.yaml](docs/04-api-design/api-spec.yaml) | OpenAPI 3.0 spec seluruh endpoint |
-| 4 | [docs/05-screen-behavior/screen-behavior.md](docs/05-screen-behavior/screen-behavior.md) | Detail behavior per screen (state, validasi, error handling) |
+| Tugas | Dokumen | Isi |
+|---|---|---|
+| 1 | [high-level-architecture.md](docs/01-architecture/high-level-architecture.md) | Diagram arsitektur, komponen, dan alasan desain |
+| 1 | [tech-decisions.md](docs/01-architecture/tech-decisions.md) | Pilihan teknologi, trade-off, dan keamanan |
+| 2 | [screen-flow.md](docs/02-screen-flow/screen-flow.md) | Screen flow aplikasi mobile |
+| 2 | [erd.md](docs/03-erd/erd.md) | Entity Relationship Diagram dan aturan bisnis di level data |
+| 3 | [api-sequence-diagrams.md](docs/04-api-design/api-sequence-diagrams.md) | Sequence diagram untuk registrasi, login, biometric, pengajuan, Home, dan reminder |
+| 3 | [loan-state-and-rules.md](docs/04-api-design/loan-state-and-rules.md) | State diagram pinjaman dan cicilan, flowchart validasi pengajuan, rumus cicilan |
+| 3 | [api-spec.yaml](docs/04-api-design/api-spec.yaml) | Spesifikasi OpenAPI 3.0 seluruh endpoint |
+| 4 | [screen-behavior.md](docs/05-screen-behavior/screen-behavior.md) | Behavior per screen dan pemetaan screen ke endpoint |
 
 ## Cara Membaca
 
-Semua diagram ditulis dalam format [Mermaid](https://mermaid.js.org/) sehingga otomatis ter-render saat dibuka di GitHub — tidak perlu tool tambahan. `api-spec.yaml` adalah spesifikasi OpenAPI 3.0 yang bisa di-import langsung ke Swagger Editor / Postman untuk eksplorasi interaktif.
+Semua diagram ditulis dalam format [Mermaid](https://mermaid.js.org/) sehingga otomatis ter-render saat dibuka di GitHub. `api-spec.yaml` bisa dibuka di [Swagger Editor](https://editor.swagger.io) atau di-import ke Postman.
 
 ## Asumsi Desain
 
-- Arsitektur backend: **monolith modular** (bukan microservices) — cukup untuk skala fintech tahap awal, modul terpisah secara logis (Auth, User, Loan, Notification, Document) agar mudah dipecah jadi service terpisah di kemudian hari.
-- Proses persetujuan pinjaman diasumsikan melalui **credit scoring engine** otomatis (rule-based/3rd party), bukan manual review — mengacu pada user story "akan diproses dengan hasil diterima/ditolak" tanpa menyebut approval manual.
-- Verifikasi KTP menggunakan **OCR + liveness check** pihak ketiga (misal: Privy/VIDA/Dukcapil API) untuk validasi identitas sebelum akun aktif.
+- **Monolith modular** (NestJS) dengan worker terpisah untuk proses asinkron. Cukup untuk skala awal, dan modul bisa dipecah menjadi service sendiri saat dibutuhkan.
+- **Persetujuan pinjaman otomatis** lewat credit scoring engine, sesuai user story "diproses dengan hasil diterima atau ditolak" yang tidak menyebut review manual.
+- **Data diri** yang dikumpulkan saat registrasi: nama, NIK, tanggal lahir, pekerjaan, dan penghasilan. Data ini dibutuhkan untuk KYC dan credit scoring.
+- **KYC lewat provider pihak ketiga** (OCR KTP, liveness, pencocokan data Dukcapil). Jika ditolak, user upload ulang dokumen.
+- **Bunga flat per bulan.** Nilainya dikonfigurasi bisnis dan mengikuti ketentuan OJK. Rumus ada di [loan-state-and-rules.md](docs/04-api-design/loan-state-and-rules.md).
+- **"Pinjaman berjalan"** mencakup status `SUBMITTED`, `PROCESSING`, `APPROVED`, dan `ACTIVE`, sesuai brief "sedang ada proses peminjaman dan belum dilunaskan".
+- **Notifikasi email dan SMS** dikirim juga untuk pengajuan yang ditolak dan untuk pengingat jatuh tempo (H-3 dan H-1), karena berguna bagi user meski tidak diminta brief.
+
+## Di Luar Scope
+
+Hal berikut dibutuhkan agar produk bisa berjalan penuh, tetapi tidak diminta di brief. Desain ini menyediakan titik sambungnya saja:
+
+- **Pencairan dana.** Status `APPROVED` berubah menjadi `ACTIVE` saat dana cair (`LOAN.disbursed_at`). Data rekening tujuan dan integrasi payment gateway untuk pencairan belum didesain.
+- **Pembayaran cicilan.** Diasumsikan user membayar lewat virtual account, dan sistem pembayaran mengubah status cicilan menjadi `PAID`.
+
+## Pertanyaan Terbuka
+
+Hal yang perlu dikonfirmasi ke bisnis sebelum development:
+
+1. Berapa suku bunga dan nominal minimum pinjaman, dan apakah ada biaya admin?
+2. Apakah limit Rp 12.000.000 sama untuk semua user, atau ditentukan per user dari hasil scoring?
+3. Apakah ada review manual untuk kasus tertentu, misalnya nominal besar atau skor di ambang batas?
+4. Apakah user yang ditolak harus menunggu sebelum mengajukan lagi, dan apakah pelunasan dipercepat diperbolehkan?
+5. Vendor mana yang sudah dikontrak untuk KYC, SMS, dan biro kredit?
