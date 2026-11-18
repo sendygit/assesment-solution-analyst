@@ -689,7 +689,8 @@ components:
           nullable: true
           allOf:
             - $ref: '#/components/schemas/Loan'
-        remaining_balance: { type: number, nullable: true }
+        remaining_balance: { type: number, nullable: true, description: "jumlah amount_due semua cicilan UNPAID" }
+        current_bill: { type: number, nullable: true, description: "cicilan terlambat + cicilan berikutnya yang belum lewat jatuh tempo" }
         next_installment:
           nullable: true
           allOf:
@@ -701,5 +702,8 @@ components:
         installment_number: { type: integer }
         amount_due: { type: number }
         due_date: { type: string, format: date }
-        status: { type: string, enum: [UPCOMING, DUE, PAID, OVERDUE] }
+        status:
+          type: string
+          enum: [UPCOMING, DUE, PAID, OVERDUE]
+          description: "Dihitung saat dibaca dari status UNPAID/PAID dan due_date"
         paid_at: { type: string, format: date-time, nullable: true }

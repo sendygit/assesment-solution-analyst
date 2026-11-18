@@ -25,7 +25,6 @@ flowchart TB
     subgraph Async["Async Processing"]
         Queue[(Amazon SQS<br/>+ dead-letter queue)]
         Worker[Worker Service<br/>credit scoring job,<br/>pengiriman notifikasi]
-        Scheduler[Scheduler harian<br/>status DUE/OVERDUE,<br/>reminder H-3/H-1]
     end
 
     subgraph Data["Data Layer"]
@@ -64,8 +63,6 @@ flowchart TB
     Worker --> CreditScore
     Worker --> DB
     Worker --> NotifM
-    Scheduler -->|update status cicilan| DB
-    Scheduler -->|trigger reminder| NotifM
     NotifM --> EmailSvc
     NotifM --> SmsSvc
     NotifM --> DB
@@ -83,9 +80,8 @@ flowchart TB
 | **Document Module** | Upload KTP/selfie ke S3, mengirim ke provider KYC, menerima webhook hasil verifikasi |
 | **Loan Module** | Simulasi cicilan, pengajuan, aturan "satu pinjaman berjalan", publish event ke queue |
 | **Repayment Module** | Jadwal cicilan, sisa hutang, tagihan bulan berjalan |
-| **Notification Module** | Mengirim notifikasi hasil pengajuan (disetujui/ditolak) dan pengingat tagihan via email dan SMS, serta mencatat status pengiriman |
+| **Notification Module** | Mengirim notifikasi hasil pengajuan (disetujui/ditolak) via email dan SMS, serta mencatat status pengiriman |
 | **Message Queue + Worker** | Menjalankan credit scoring dan pengiriman notifikasi di luar request user, dengan retry dan dead-letter queue |
-| **Scheduler** | Job harian: mengubah status cicilan menjadi `DUE`/`OVERDUE` dan memicu pengingat H-3 dan H-1 |
 | **Credit Scoring Engine** | Menentukan disetujui/ditolak dari data profil (umur, pekerjaan, penghasilan) dan data biro kredit |
 | **Object Storage** | Menyimpan file KTP dan selfie, terenkripsi, diakses lewat signed URL |
 

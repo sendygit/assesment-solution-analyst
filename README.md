@@ -20,7 +20,7 @@ Dokumen desain solusi untuk aplikasi mobile pinjaman online PT. XYZ. Disusun ber
 | 1 | [tech-decisions.md](docs/01-architecture/tech-decisions.md) | Pilihan teknologi, trade-off, dan keamanan |
 | 2 | [screen-flow.md](docs/02-screen-flow/screen-flow.md) | Screen flow aplikasi mobile |
 | 2 | [erd.md](docs/03-erd/erd.md) | Entity Relationship Diagram dan aturan bisnis di level data |
-| 3 | [api-sequence-diagrams.md](docs/04-api-design/api-sequence-diagrams.md) | Sequence diagram untuk registrasi, login, biometric, pengajuan, Home, dan reminder |
+| 3 | [api-sequence-diagrams.md](docs/04-api-design/api-sequence-diagrams.md) | Sequence diagram untuk registrasi, login, biometric, pengajuan, dan Home |
 | 3 | [loan-state-and-rules.md](docs/04-api-design/loan-state-and-rules.md) | State diagram pinjaman dan cicilan, flowchart validasi pengajuan, rumus cicilan |
 | 3 | [api-spec.yaml](docs/04-api-design/api-spec.yaml) | Spesifikasi OpenAPI 3.0 seluruh endpoint |
 | 4 | [screen-behavior.md](docs/05-screen-behavior/screen-behavior.md) | Behavior per screen dan pemetaan screen ke endpoint |
@@ -37,7 +37,7 @@ Semua diagram ditulis dalam format [Mermaid](https://mermaid.js.org/) sehingga o
 - **KYC lewat provider pihak ketiga** (OCR KTP, liveness, pencocokan data Dukcapil). Jika ditolak, user upload ulang dokumen.
 - **Bunga flat per bulan.** Nilainya dikonfigurasi bisnis dan mengikuti ketentuan OJK. Rumus ada di [loan-state-and-rules.md](docs/04-api-design/loan-state-and-rules.md).
 - **"Pinjaman berjalan"** mencakup status `SUBMITTED`, `PROCESSING`, `APPROVED`, dan `ACTIVE`, sesuai brief "sedang ada proses peminjaman dan belum dilunaskan".
-- **Notifikasi email dan SMS** dikirim juga untuk pengajuan yang ditolak dan untuk pengingat jatuh tempo (H-3 dan H-1), karena berguna bagi user meski tidak diminta brief.
+- **Notifikasi email dan SMS** dikirim juga untuk pengajuan yang ditolak, karena user perlu tahu hasilnya meski brief hanya menyebut pengajuan yang diterima.
 
 ## Di Luar Scope
 

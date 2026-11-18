@@ -108,7 +108,7 @@ erDiagram
         decimal interest_part "15,2"
         decimal amount_due "15,2"
         date due_date
-        enum status "UPCOMING, DUE, PAID, OVERDUE"
+        enum status "UNPAID, PAID"
         datetime paid_at
     }
 
@@ -117,7 +117,7 @@ erDiagram
         uuid user_id FK
         uuid loan_id FK
         enum channel "EMAIL, SMS"
-        enum type "LOAN_APPROVED, LOAN_REJECTED, PAYMENT_REMINDER"
+        enum type "LOAN_APPROVED, LOAN_REJECTED"
         enum delivery_status "SENT, FAILED"
         int retry_count
         datetime sent_at

@@ -33,18 +33,23 @@ stateDiagram-v2
 
 ## 2. State Diagram Cicilan (REPAYMENT_SCHEDULE)
 
+Database hanya menyimpan dua status: `UNPAID` dan `PAID`. Perubahan ke `PAID` datang dari sistem pembayaran eksternal (di luar scope).
+
 ```mermaid
 stateDiagram-v2
-    [*] --> UPCOMING: jadwal dibuat
-    UPCOMING --> DUE: scheduler, H-0 jatuh tempo
-    UPCOMING --> PAID: dibayar lebih awal
-    DUE --> PAID: pembayaran diterima
-    DUE --> OVERDUE: scheduler, lewat jatuh tempo
-    OVERDUE --> PAID: pembayaran diterima
+    [*] --> UNPAID: jadwal dibuat saat pinjaman APPROVED
+    UNPAID --> PAID: pembayaran diterima
     PAID --> [*]
 ```
 
-Perubahan status `DUE` dan `OVERDUE` dilakukan oleh scheduler yang berjalan harian. Scheduler yang sama mengirim reminder H-3 dan H-1. Perubahan ke `PAID` datang dari sistem pembayaran eksternal (di luar scope).
+Status yang ditampilkan ke user dihitung saat data dibaca, sehingga tidak perlu job terjadwal untuk memperbaruinya:
+
+| Status tampilan | Kondisi |
+|---|---|
+| `PAID` | status `PAID` |
+| `UPCOMING` | `UNPAID` dan `due_date` > hari ini |
+| `DUE` | `UNPAID` dan `due_date` = hari ini |
+| `OVERDUE` | `UNPAID` dan `due_date` < hari ini |
 
 ## 3. Flowchart Validasi `POST /loans`
 
@@ -82,3 +87,20 @@ Bunga **flat** per bulan, nilainya dikonfigurasi oleh bisnis dan wajib mengikuti
 | Total pengembalian | cicilan × tenor | Rp 6.540.000 |
 
 Semua angka dihitung di server (`POST /loans/simulate`) supaya app dan backend tidak pernah berbeda hasil.
+
+## 5. Sisa Hutang dan Tagihan Bulan Ini
+
+Dipakai oleh `GET /loans/current` untuk screen Home, hanya jika pinjaman berstatus `ACTIVE`.
+
+| Nilai | Rumus |
+|---|---|
+| Sisa hutang (`remaining_balance`) | jumlah `amount_due` dari semua cicilan `UNPAID` |
+| Tagihan bulan ini (`current_bill`) | jumlah `amount_due` dari cicilan `UNPAID` yang sudah lewat jatuh tempo, ditambah satu cicilan `UNPAID` berikutnya yang belum lewat jatuh tempo |
+| Jatuh tempo (`next_installment.due_date`) | `due_date` paling awal dari cicilan `UNPAID` |
+
+Contoh dengan pinjaman di atas (cicilan Rp 1.090.000 × 6), setelah 2 cicilan lunas:
+
+| Kondisi | Sisa hutang | Tagihan bulan ini |
+|---|---|---|
+| Cicilan ke-3 belum jatuh tempo | Rp 4.360.000 | Rp 1.090.000 (cicilan ke-3) |
+| Cicilan ke-3 terlambat, cicilan ke-4 bulan ini | Rp 4.360.000 | Rp 2.180.000 (cicilan ke-3 dan ke-4) |

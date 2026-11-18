@@ -175,31 +175,9 @@ sequenceDiagram
     GW->>Loan: forward
     Loan->>DB: pinjaman berstatus SUBMITTED/PROCESSING/APPROVED/ACTIVE
     Loan->>DB: jika ACTIVE, hitung sisa hutang dan cicilan berikutnya
-    Loan-->>U: 200 {can_apply, blocked_reason, loan, remaining_balance, next_installment}
+    Loan-->>U: 200 {can_apply, blocked_reason, loan, remaining_balance, current_bill, next_installment}
 
     U->>GW: GET /loans/{loanId}/installments
     GW->>Loan: forward
     Loan-->>U: 200 [daftar cicilan + status]
-```
-
-## 6. Reminder dan Status Jatuh Tempo
-
-```mermaid
-sequenceDiagram
-    participant S as Reminder Scheduler (cron harian)
-    participant DB as Database
-    participant Notif as Notification Module
-    participant Ext as Email / SMS Provider
-    actor U as User
-
-    S->>DB: UPCOMING yang jatuh tempo hari ini menjadi DUE
-    S->>DB: DUE yang lewat jatuh tempo menjadi OVERDUE
-    S->>DB: cari cicilan belum PAID dengan due_date H-3 / H-1
-    DB-->>S: daftar cicilan + data user
-    loop setiap cicilan
-        S->>Notif: trigger PAYMENT_REMINDER
-        Notif->>Ext: kirim
-        Ext-->>U: pengingat tagihan
-        Notif->>DB: simpan NOTIFICATION (SENT / FAILED)
-    end
 ```
